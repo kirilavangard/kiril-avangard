@@ -1,0 +1,435 @@
+from .default import router
+
+__all__ = [
+    "router"
+]
+from aiogram import Router, F
+from aiogram.types import Message 
+from aiogram.filters import CommandStart
+
+from src.gifts import parse_members
+
+from config import ADMINS
+
+
+router = Router()
+IS_ACTIVE = False
+
+
+@router.message(CommandStart())
+async def start_handler(message: Message):
+    await message.answer(
+        text='<b>⚡️ Отправьте чаты списком и парсинг пользователей начнется автоматически</b>'
+    )
+
+
+@router.message(F.from_user.id.in_(ADMINS))
+async def chats_handler(message: Message):
+    global IS_ACTIVE 
+
+    if IS_ACTIVE:
+        return await message.answer('<b>❌ Дождитесь окончания предыдущего парсинга</b>')
+
+    IS_ACTIVE = True
+    
+    chats = message.text.split('\n')
+    for index, chat in enumerate(chats):
+        chats[index] = chat.replace('https://', '').replace('t.me/', '').replace('@', '')
+
+    result_message = await message.answer(f'<b>📑 Начали парсинг {len(chats)} чатов.</b>')
+
+    for chat in chats:
+        async for result_gift in parse_members(chat):
+            result_text = f'<b>🌟 Чат: @{chat} | Юзер: @{result_gift[0]["username"]} [id: {result_gift[0]["user_id"]}]</b>\n\n'
+            gifts_text = ""
+
+            for index, item in enumerate(result_gift):
+                gift_line = f'<b><i>{index + 1}.</i> Gift: {item["gift"]}</b>\n'
+                
+                if len(result_text + gifts_text + gift_line) <= 4096: # max telegram message size 
+                    gifts_text += gift_line
+                else:
+                    break 
+                    
+            await result_message.reply(result_text + gifts_text)
+
+    await result_message.reply(f'<b>✅ Парсинг окончен</b>')
+    IS_ACTIVE = False
+from .parser import get_client, get_user_gifts, parse_members
+
+__all__ = [
+    "get_client",
+    "get_user_gifts",
+    "parse_members"
+]
+import os
+import asyncio
+
+from typing import AsyncGenerator, Dict, Any
+
+from pyrogram import Client
+from pyrogram.types import ChatMember
+from pyrogram.enums import ChatMemberStatus
+
+from config import API_HASH, API_ID, GIFT_IDS
+
+
+async def get_client():
+    session = [file for file in os.listdir('session') if file.split('.')[-1] == 'session']
+    
+    if not session:
+        session = ['main']
+    
+    client = Client(
+        name=f'session/{session[0].replace(".session", "")}',
+        api_id=API_ID,
+        api_hash=API_HASH,
+        system_version="4.16.30-vxCUSTOM"
+    )
+    await client.start()
+    return client
+
+async def parse_members(chat: str) -> AsyncGenerator[Dict[str, Any], None]:
+    client = await get_client()
+    
+    try:
+        async for user in client.get_chat_members(chat):
+            user: ChatMember
+            if user.status == ChatMemberStatus.MEMBER:
+                gifts = await get_user_gifts(client, user.user.id, user.user.username)
+
+                if gifts:
+                    yield gifts
+
+                await asyncio.sleep(0.5)
+
+    except Exception as e:
+        print(e)
+    
+    if client:
+        await client.stop()
+
+async def get_user_gifts(client: Client, user_id: int, username: str):
+    result = []
+    try:
+        async for gift in client.get_user_gifts(user_id):
+            if gift.is_limited == True and gift.is_upgraded == None and gift.id in GIFT_IDS:
+                result.append({"gift": gift.id, "user_id": user_id, "username": username})
+        
+    except Exception as e:
+        print(f"Ошибка при получении пользователя: {e}")
+        return []
+    
+    return result
+
+
+async def main():
+    client = await get_client()
+    pass
+
+
+if __name__ == '__main__':
+    asyncio.run(main())
+aiogram==3.17.0
+Kurigram==2.1.36
+Pyrogram==2.0.106
+structlog==25.1.0
+# 🎁 Telegram Gifts Parser
+
+Бот для автоматического парсинга подарков пользователей из Telegram чатов.
+
+## 📋 Описание
+
+Этот инструмент предназначен для анализа и поиска лимитированных подарков Telegram в публичных чатах. Бот автоматически сканирует указанные чаты, находит пользователей с определенными подарками и предоставляет детальную информацию о них. Идеальное решение для коллекционеров и трейдеров Telegram подарков.
+
+## ⚠️ Важно
+
+Для работы парсера необходима активная сессия Telegram аккаунта, так как боты не имеют доступа к информации о подарках пользователей. При первом запуске вам будет предложено авторизоваться в Telegram через ваш аккаунт.
+
+## 🚀 Основные возможности
+
+- Фильтрация по определенным ID подарков (NFT)
+- Вывод информации о пользователе и его подарках
+- Поддержка работы с большими чатами
+
+## ⚙️ Установка и настройка
+
+1. Клонируйте репозиторий:
+```bash
+git clone https://github.com/vmilfe/gift-parser.git
+cd gifts-parser
+```
+
+2. Установите зависимости:
+```bash
+pip install -r requirements.txt
+```
+
+3. Отредактируйте `config.py` и укажите необходимые параметры:
+```python
+BOT_TOKEN = 'ваш_токен_бота'
+ADMINS = [ваш_id_telegram]
+API_ID = ваш_api_id
+API_HASH = 'ваш_api_hash'
+```
+
+4. При первом запуске вам потребуется авторизоваться в Telegram:
+   - Запустите бота
+   - Введите номер телефона в формате: +79001234567
+   - Введите код подтверждения из Telegram
+   - Если включена двухфакторная аутентификация, введите пароль
+   - После успешной авторизации сессия сохранится автоматически
+
+5. Запустите бота:
+```bash
+python main.py
+```
+
+## 🔑 Использование
+
+1. Запустите бота командой `/start`
+2. Отправьте список чатов для парсинга (каждый чат с новой строки)
+3. Бот начнет автоматический сбор информации о подарках
+
+## 👨‍💻 Разработчик
+
+По всем вопросам обращаться: [@awixa](https://t.me/awixa)
+import asyncio
+import os
+from structlog import get_logger
+
+from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
+
+from src.handlers import router
+from src.gifts import get_client
+
+from config import BOT_TOKEN
+
+
+async def try_load_session():
+    if 'main.session' not in os.listdir('session'):
+        await get_client()
+
+async def startup_info(bot: Bot):
+    logger = get_logger()
+    me = await bot.get_me()
+
+    await logger.ainfo(f'start bot: @{me.username} [developer: t.me/awixa]')
+
+async def main():
+    bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(
+        parse_mode='html'
+    ))
+
+    dp = Dispatcher()
+    dp.include_router(router)
+
+    await try_load_session()
+    await startup_info(bot)
+    await dp.start_polling(bot) 
+
+
+if __name__ == '__main__':
+    asyncio.run(main())
+BOT_TOKEN = '7805344270:AAHt55hKG3t5xTuLgx3Rex-vC-rKdj42Kac'
+ADMINS = [5605445119]
+
+API_ID = "29452350"
+API_HASH = "ЦЕ8349Ф666Д9Д3Д3Б6493581685Д9КБ4"
+
+# actualy 2025-01-16
+GIFT_IDS = [ 
+    5983471780763796287,
+    5936085638515261992,
+    5933671725160989227,
+    5936013938331222567,
+    5913442287462908725,
+    5915502858152706668,
+    5915521180483191380,
+    5913517067138499193,
+    5882125812596999035,
+    5882252952218894938,
+    5857140566201991735,
+    5846226946928673709,
+    5845776576658015084,
+    5841689550203650524,
+    5841391256135008713,
+    5839038009193792264,
+    5837059369300132790
+]
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+#  Usually these files are written by a python script from a template
+#  before PyInstaller builds the exe, so as to inject date/other infos into it.
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+.pybuilder/
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+#   For a library or package, you might want to ignore these files since the code is
+#   intended to run in multiple environments; otherwise, check them in:
+# .python-version
+
+# pipenv
+#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
+#   However, in case of collaboration, if having platform-specific dependencies or dependencies
+#   having no cross-platform support, pipenv may install dependencies that don't work, or not
+#   install all needed dependencies.
+#Pipfile.lock
+
+# UV
+#   Similar to Pipfile.lock, it is generally recommended to include uv.lock in version control.
+#   This is especially recommended for binary packages to ensure reproducibility, and is more
+#   commonly ignored for libraries.
+#uv.lock
+
+# poetry
+#   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.
+#   This is especially recommended for binary packages to ensure reproducibility, and is more
+#   commonly ignored for libraries.
+#   https://python-poetry.org/docs/basic-usage/#commit-your-poetrylock-file-to-version-control
+#poetry.lock
+
+# pdm
+#   Similar to Pipfile.lock, it is generally recommended to include pdm.lock in version control.
+#pdm.lock
+#   pdm stores project-wide configurations in .pdm.toml, but it is recommended to not include it
+#   in version control.
+#   https://pdm.fming.dev/latest/usage/project/#working-with-version-control
+.pdm.toml
+.pdm-python
+.pdm-build/
+
+# PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
+__pypackages__/
+
+# Celery stuff
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/
+
+# Cython debug symbols
+cython_debug/
+
+# PyCharm
+#  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
+#  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
+#  and can be added to the global gitignore or merged into this file.  For a more nuclear
+#  option (not recommended) you can uncomment the following to ignore the entire idea folder.
+#.idea/
+
+# PyPI configuration file
+.pypirc
+
+# Telethon sessions
+session/*
+!session/.gitkeep
